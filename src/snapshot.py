@@ -110,16 +110,18 @@ def store_snapshots(conn, snapshots):
     return len(snapshots)
 
 
-def run_snapshot(max_pages=None):
+def run_snapshot(max_pages=None, max_hours=72, min_volume=5000):
     """
     Main snapshot routine:
     1. Paginate through ALL active markets
-    2. Extract current prices, bid/ask, volume, liquidity
-    3. Calculate hours_to_close
+    2. Filter: hours_to_close <= max_hours AND volume >= min_volume
+    3. Extract current prices, bid/ask, volume, liquidity
     4. Bulk insert into active_market_snapshots
 
     Args:
         max_pages: optional cap on pages. None = fetch all.
+        max_hours: only keep markets closing within this many hours (default 72 = 3 days).
+        min_volume: only keep markets with volume >= this (default 5000).
     """
     conn = get_connection("polymarket")
     offset = 0
@@ -128,7 +130,7 @@ def run_snapshot(max_pages=None):
     batch = []
 
     snapshot_time = datetime.now(timezone.utc)
-    logger.info(f"Snapshot started at {snapshot_time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    logger.info(f"Snapshot started at {snapshot_time.strftime('%Y-%m-%d %H:%M:%S')} UTC | filter: hours<={max_hours}, vol>={min_volume}")
 
     while True:
         try:
@@ -158,6 +160,13 @@ def run_snapshot(max_pages=None):
                 delta = end_date - snapshot_time
                 hours_to_close = Decimal(str(round(delta.total_seconds() / 3600, 2)))
 
+            # Filter: skip markets outside deadline or below volume threshold
+            market_volume = to_decimal(m.get("volume", 0)) or Decimal("0")
+            if max_hours is not None and (hours_to_close is None or hours_to_close < 0 or hours_to_close > max_hours):
+                continue
+            if min_volume is not None and market_volume < min_volume:
+                continue
+
             batch.append((
                 condition_id,
                 snapshot_time,
@@ -169,7 +178,7 @@ def run_snapshot(max_pages=None):
                 best_bid,
                 best_ask,
                 spread,
-                to_decimal(m.get("volume", 0)) or Decimal("0"),
+                market_volume,
                 to_decimal(m.get("liquidity", 0)) or Decimal("0"),
                 hours_to_close,
             ))
