@@ -140,6 +140,15 @@ def cmd_status():
     conn.close()
 
 
+def getarg(name, default=None):
+    """Extract --name=value from sys.argv."""
+    prefix = f"--{name}="
+    for a in sys.argv:
+        if a.startswith(prefix):
+            return a[len(prefix):]
+    return default
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -160,7 +169,11 @@ def main():
         cmd_status()
     elif cmd == "snapshot":
         from snapshot import run_snapshot
-        run_snapshot()
+        run_snapshot(
+            max_hours=float(getarg("max-hours", "72")),
+            min_hours=float(getarg("min-hours", "-1")),
+            min_volume=float(getarg("min-vol", "5000")),
+        )
     else:
         print(f"Unknown command: {cmd}")
         print(__doc__)

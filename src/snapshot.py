@@ -4,7 +4,7 @@ Periodic snapshot fetcher for active Polymarket markets.
 Fetches current odds (yes/no price, bid/ask, volume, liquidity)
 and stores every snapshot in active_market_snapshots table.
 
-Designed to run every 5 minutes via cron.
+Designed to run every 10 minutes via cron.
 """
 
 import requests
@@ -110,27 +110,67 @@ def store_snapshots(conn, snapshots):
     return len(snapshots)
 
 
-def run_snapshot(max_pages=None, max_hours=72, min_volume=5000):
+CRYPTO_KEYWORDS = [
+    "bitcoin", "btc", "ethereum", "eth", "crypto", "cryptocurrency",
+    "solana", "sol", "xrp", "ripple", "dogecoin", "doge", "bnb",
+    "cardano", "ada", "polygon", "matic", "avalanche", "avax",
+    "chainlink", "link", "litecoin", "ltc", "polkadot", "dot",
+    "shiba", "pepe", "memecoin", "defi", "nft", "blockchain",
+    "token", "binance", "coinbase", "crypto.com", "stablecoin",
+    "usdt", "usdc", "tether",
+]
+
+CRYPTO_TAGS = {"crypto", "cryptocurrency", "bitcoin", "ethereum"}
+
+
+def is_crypto_market(market_data):
+    """Detect if a market is crypto-related based on question text and tags."""
+    question = (market_data.get("question") or "").lower()
+    slug = (market_data.get("slug") or "").lower()
+    text = question + " " + slug
+
+    # Check tags
+    tags_raw = market_data.get("tags") or market_data.get("tag") or []
+    if isinstance(tags_raw, str):
+        try:
+            tags_raw = json.loads(tags_raw)
+        except Exception:
+            tags_raw = []
+    tags_lower = {str(t).lower() for t in tags_raw}
+    if tags_lower & CRYPTO_TAGS:
+        return True
+
+    # Check question/slug text
+    for kw in CRYPTO_KEYWORDS:
+        if kw in text:
+            return True
+
+    return False
+
+
+def run_snapshot(max_pages=None, max_hours=72, min_hours=-1, min_volume=5000):
     """
     Main snapshot routine:
     1. Paginate through ALL active markets
-    2. Filter: hours_to_close <= max_hours AND volume >= min_volume
+    2. Filter: min_hours <= hours_to_close <= max_hours AND volume >= min_volume AND not crypto
     3. Extract current prices, bid/ask, volume, liquidity
     4. Bulk insert into active_market_snapshots
 
     Args:
         max_pages: optional cap on pages. None = fetch all.
         max_hours: only keep markets closing within this many hours (default 72 = 3 days).
+        min_hours: allow markets up to this many hours past deadline (default -1 = allow 1h past).
         min_volume: only keep markets with volume >= this (default 5000).
     """
     conn = get_connection("polymarket")
     offset = 0
     page_count = 0
     total = 0
+    crypto_skipped = 0
     batch = []
 
     snapshot_time = datetime.now(timezone.utc)
-    logger.info(f"Snapshot started at {snapshot_time.strftime('%Y-%m-%d %H:%M:%S')} UTC | filter: hours<={max_hours}, vol>={min_volume}")
+    logger.info(f"Snapshot started at {snapshot_time.strftime('%Y-%m-%d %H:%M:%S')} UTC | filter: {min_hours}h<=hours<={max_hours}h, vol>={min_volume}, no_crypto")
 
     while True:
         try:
@@ -160,9 +200,16 @@ def run_snapshot(max_pages=None, max_hours=72, min_volume=5000):
                 delta = end_date - snapshot_time
                 hours_to_close = Decimal(str(round(delta.total_seconds() / 3600, 2)))
 
+            # Filter: skip crypto markets
+            if is_crypto_market(m):
+                crypto_skipped += 1
+                continue
+
             # Filter: skip markets outside deadline or below volume threshold
             market_volume = to_decimal(m.get("volume", 0)) or Decimal("0")
-            if max_hours is not None and (hours_to_close is None or hours_to_close < 0 or hours_to_close > max_hours):
+            if max_hours is not None and (hours_to_close is None or hours_to_close > max_hours):
+                continue
+            if min_hours is not None and hours_to_close is not None and hours_to_close < min_hours:
                 continue
             if min_volume is not None and market_volume < min_volume:
                 continue
@@ -197,9 +244,9 @@ def run_snapshot(max_pages=None, max_hours=72, min_volume=5000):
     if batch:
         n = store_snapshots(conn, batch)
         conn.commit()
-        logger.info(f"Snapshot complete: {n} markets stored, {total} total fetched")
+        logger.info(f"Snapshot complete: {n} markets stored (after filters), {total} total fetched, {crypto_skipped} crypto excluded")
     else:
-        logger.warning("No active markets found")
+        logger.warning(f"No active markets found after filters | {total} fetched | {crypto_skipped} crypto excluded")
 
     conn.close()
     return total
