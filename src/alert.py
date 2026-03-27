@@ -44,6 +44,24 @@ SPORTS_KEYWORDS = [
 
 SPORTS_TAGS = {"sports", "football", "basketball", "baseball", "hockey", "soccer", "esports", "ufc", "boxing"}
 
+# Weather / temperature keywords — exclude from alerts
+WEATHER_KEYWORDS = [
+    "°c", "°f", "temperature", "weather", "rain", "snow", "wind speed",
+    "humidity", "forecast", "storm", "hurricane", "typhoon", "tornado",
+    "heat wave", "cold front", "high of", "low of", "degrees",
+    "warmest", "coldest", "precipitation", "sunny", "cloudy",
+    "wellington",  # appears in temperature markets
+]
+
+
+def is_weather_market(question: str) -> bool:
+    """Detect if a market question is weather/temperature-related."""
+    q = (question or "").lower()
+    for kw in WEATHER_KEYWORDS:
+        if kw in q:
+            return True
+    return False
+
 
 def is_sports_market(question: str) -> bool:
     """Detect if a market question is sports-related."""
@@ -111,6 +129,10 @@ def detect_big_movers(threshold=None):
     for row in cursor.fetchall():
         # Skip sports-related markets
         if is_sports_market(row["question"]):
+            continue
+
+        # Skip weather/temperature markets
+        if is_weather_market(row["question"]):
             continue
 
         new_yes = row["new_yes"]
