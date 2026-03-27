@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 # Absolute threshold for YES price change (e.g. 0.35 -> 0.40 = 5%)
 PRICE_CHANGE_THRESHOLD = Decimal("0.05")
 
+# Minimum volume for alert (skip illiquid markets where 1 trade moves 10%)
+MIN_ALERT_VOLUME = 1000
+
+# Dedup: suppress alert if same condition_id alerted within this many snapshots
+DEDUP_SNAPSHOTS = 3  # ~30 minutes at 10-min interval
+
 # Sports keywords — exclude traditional sports + esports from alerts
 SPORTS_KEYWORDS = [
     # Traditional sports
@@ -68,6 +74,31 @@ def is_sports_market(question: str) -> bool:
     return False
 
 
+def load_dedup_state():
+    """Load recently-alerted condition_ids from state file."""
+    state_file = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "alert_dedup.json"
+    )
+    try:
+        with open(state_file) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_dedup_state(state):
+    """Save dedup state, pruning entries older than DEDUP_SNAPSHOTS."""
+    state_file = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "alert_dedup.json"
+    )
+    # Keep only recent entries
+    pruned = {k: v for k, v in state.items() if v >= DEDUP_SNAPSHOTS}
+    # Decrement counters
+    pruned = {k: v - 1 for k, v in pruned.items()}
+    with open(state_file, "w") as f:
+        json.dump(pruned, f)
+
+
 def detect_big_movers(threshold=None):
     """
     Compare the latest two snapshots. For each market present in both,
@@ -100,6 +131,9 @@ def detect_big_movers(threshold=None):
 
     t_new = rows[0]["snapshot_time"]
     t_old = rows[1]["snapshot_time"]
+
+    # Load dedup state
+    dedup = load_dedup_state()
 
     # Join latest with previous snapshot on condition_id
     cursor.execute("""
@@ -136,22 +170,37 @@ def detect_big_movers(threshold=None):
         change = new_yes - old_yes
         abs_change = abs(change)
 
+        # Skip low-volume noise
+        volume = float(row["new_volume"]) if row["new_volume"] else 0
+        if volume < MIN_ALERT_VOLUME:
+            continue
+
+        # Skip recently-alerted markets
+        cid = row["condition_id"]
+        if cid in dedup:
+            continue
+
         if abs_change >= threshold:
             direction = "📈" if change > 0 else "📉"
             movers.append({
                 "question": row["question"],
-                "condition_id": row["condition_id"],
+                "condition_id": cid,
                 "old_yes": float(old_yes),
                 "new_yes": float(new_yes),
                 "change": float(change),
                 "abs_change": float(abs_change),
                 "direction": direction,
-                "volume": float(row["new_volume"]) if row["new_volume"] else 0,
+                "volume": volume,
                 "hours_to_close": float(row["hours_to_close"]) if row["hours_to_close"] else None,
             })
 
     # Sort by absolute change descending
     movers.sort(key=lambda x: x["abs_change"], reverse=True)
+
+    # Update dedup state with new alerts
+    for m in movers:
+        dedup[m["condition_id"]] = DEDUP_SNAPSHOTS
+    save_dedup_state(dedup)
 
     cursor.close()
     conn.close()
@@ -175,19 +224,18 @@ def format_time_left(hours_to_close):
 
 
 def format_alerts(movers):
-    """Format movers into a readable string."""
+    """Format movers into a Telegram-ready string. Self-contained — no summarization needed."""
     if not movers:
         return ""
 
-    lines = [f"🚨 **{len(movers)} markets moved ≥5%** since last snapshot:\n"]
+    lines = [f"🚨 {len(movers)} markets moved ≥5%:\n"]
     for i, m in enumerate(movers, 1):
         time_left = format_time_left(m['hours_to_close'])
         vol = f"${m['volume']:,.0f}"
+        sign = "+" if m['change'] > 0 else ""
         lines.append(
-            f"{i}. {m['direction']} **{m['question']}**\n"
-            f"   YES: {m['old_yes']:.1%} → {m['new_yes']:.1%}  "
-            f"({'+' if m['change']>0 else ''}{m['change']:.1%})  "
-            f"| Vol: {vol} | {time_left}"
+            f"{i}. {m['direction']} {m['question']}\n"
+            f"   YES {m['old_yes']:.1%}→{m['new_yes']:.1%} ({sign}{m['change']:.1%}) | {vol} | {time_left}"
         )
     return "\n".join(lines)
 
