@@ -46,11 +46,7 @@ SPORTS_TAGS = {"sports", "football", "basketball", "baseball", "hockey", "soccer
 
 # Weather / temperature keywords — exclude from alerts
 WEATHER_KEYWORDS = [
-    "°c", "°f", "temperature", "weather", "rain", "snow", "wind speed",
-    "humidity", "forecast", "storm", "hurricane", "typhoon", "tornado",
-    "heat wave", "cold front", "high of", "low of", "degrees",
-    "warmest", "coldest", "precipitation", "sunny", "cloudy",
-    "wellington",  # appears in temperature markets
+    "°c", "°f", "temperature", "weather",
 ]
 
 
