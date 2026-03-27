@@ -7,13 +7,16 @@ Creates tables for markets, trades, backtests, and parameter analysis.
 import mysql.connector
 from mysql.connector import Error
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DB_CONFIG = {
-    "host": "127.0.0.1",
-    "port": 3306,
-    "user": "big_smart",
-    "password": "big_smart",
-    "database": "polymarket",
+    "host": os.getenv("DB_HOST", "127.0.0.1"),
+    "port": int(os.getenv("DB_PORT", 3306)),
+    "user": os.getenv("DB_USER", "big_smart"),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "database": os.getenv("DB_NAME", "polymarket"),
 }
 
 SCHEMA_SQL = """
