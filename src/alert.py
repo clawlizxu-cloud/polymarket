@@ -4,6 +4,7 @@ Price change alert: detect markets where YES price moved >5%
 between two consecutive snapshots.
 """
 
+import json
 import logging
 import os
 from decimal import Decimal
@@ -14,6 +15,43 @@ logger = logging.getLogger(__name__)
 
 # Absolute threshold for YES price change (e.g. 0.35 -> 0.40 = 5%)
 PRICE_CHANGE_THRESHOLD = Decimal("0.05")
+
+# Sports keywords — exclude traditional sports + esports from alerts
+SPORTS_KEYWORDS = [
+    # Traditional sports
+    "nfl", "nba", "mlb", "nhl", "soccer", "football", "basketball",
+    "baseball", "hockey", "tennis", "ufc", "mma", "boxing", "cricket",
+    "rugby", "golf", "f1", "formula 1", "premier league", "la liga",
+    "bundesliga", "serie a", "ligue 1", "champions league", "world cup",
+    "euros", "copa america", "super bowl", "grand slam", "wimbledon",
+    "masters", "open championship", "playoffs", "finals", "semifinal",
+    "quarterfinal", "match", "game", "vs", "versus",
+    # Teams / leagues (common patterns)
+    "devils", "predators", "lakers", "celtics", "yankees", "patriots",
+    "manchester", "barcelona", "real madrid", "bayern", "psg", "liverpool",
+    "arsenal", "chelsea", "tottenham", "juventus", "inter milan",
+    # Esports
+    "valorant", "cs2", "csgo", "cs:", "dota", "league of legends", "lol",
+    "overwatch", "call of duty", "cod", "fortnite", "apex legends",
+    "starcraft", "rocket league", "rainbow six", "pubg", "mobile legends",
+    "counter-strike", "esport", "e-sport", "map 1", "map 2", "map 3",
+    # Common match phrases
+    "who will win", "first half", "second half", "half time",
+    "overtime", "penalty", "red card", "yellow card", "goal",
+    "spread:", "point spread", "moneyline", "over/under",
+    "odds", "line ", "lines", "parlay",
+]
+
+SPORTS_TAGS = {"sports", "football", "basketball", "baseball", "hockey", "soccer", "esports", "ufc", "boxing"}
+
+
+def is_sports_market(question: str) -> bool:
+    """Detect if a market question is sports-related."""
+    q = (question or "").lower()
+    for kw in SPORTS_KEYWORDS:
+        if kw in q:
+            return True
+    return False
 
 
 def detect_big_movers(threshold=None):
@@ -71,6 +109,10 @@ def detect_big_movers(threshold=None):
 
     movers = []
     for row in cursor.fetchall():
+        # Skip sports-related markets
+        if is_sports_market(row["question"]):
+            continue
+
         new_yes = row["new_yes"]
         old_yes = row["old_yes"]
         change = new_yes - old_yes
