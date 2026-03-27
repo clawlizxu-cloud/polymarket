@@ -249,6 +249,22 @@ def run_snapshot(max_pages=None, max_hours=72, min_hours=-1, min_volume=5000):
         logger.warning(f"No active markets found after filters | {total} fetched | {crypto_skipped} crypto excluded")
 
     conn.close()
+    # Check for big price movers vs previous snapshot
+    try:
+        from alert import detect_big_movers, format_alerts
+        movers = detect_big_movers()
+        alert_text = format_alerts(movers)
+        if alert_text:
+            logger.info(f"\n{alert_text}")
+            # Write alert to a file so cron job can pick it up
+            alert_file = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "latest_alert.txt"
+            )
+            with open(alert_file, "w") as f:
+                f.write(alert_text)
+    except Exception as e:
+        logger.warning(f"Alert check failed: {e}")
+
     return total
 
 

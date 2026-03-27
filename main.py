@@ -13,6 +13,7 @@ Usage:
     python main.py analyze              # Full parameter sweep
     python main.py analyze --quick      # Quick parameter sweep
     python main.py snapshot              # One-shot snapshot of active market odds
+    python main.py alert                 # Check for big price movers (≥5%) since last snapshot
     python main.py status               # Show DB stats
 """
 
@@ -167,6 +168,15 @@ def main():
         cmd_analyze(args)
     elif cmd == "status":
         cmd_status()
+    elif cmd == "alert":
+        from alert import detect_big_movers, format_alerts
+        threshold = float(getarg("threshold", "0.05"))
+        movers = detect_big_movers(threshold=threshold)
+        alert_text = format_alerts(movers)
+        if alert_text:
+            print(alert_text)
+        else:
+            print("No big movers detected.")
     elif cmd == "snapshot":
         from snapshot import run_snapshot
         run_snapshot(
