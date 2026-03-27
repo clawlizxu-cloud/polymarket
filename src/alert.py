@@ -142,6 +142,20 @@ def detect_big_movers(threshold=None):
     return movers
 
 
+def format_time_left(hours_to_close):
+    """Format hours remaining into a human-readable string."""
+    if hours_to_close is None:
+        return "⏰ 截止时间未知"
+    total_min = int(hours_to_close * 60)
+    if total_min < 60:
+        return f"⏰ 剩余 {total_min} 分钟"
+    h = int(hours_to_close)
+    m = total_min - h * 60
+    if m > 0:
+        return f"⏰ 剩余 {h}h {m}m"
+    return f"⏰ 剩余 {h}h"
+
+
 def format_alerts(movers):
     """Format movers into a readable string."""
     if not movers:
@@ -149,13 +163,13 @@ def format_alerts(movers):
 
     lines = [f"🚨 **{len(movers)} markets moved ≥5%** since last snapshot:\n"]
     for i, m in enumerate(movers, 1):
-        hours = f"{m['hours_to_close']:.1f}h" if m['hours_to_close'] else "?"
+        time_left = format_time_left(m['hours_to_close'])
         vol = f"${m['volume']:,.0f}"
         lines.append(
             f"{i}. {m['direction']} **{m['question']}**\n"
             f"   YES: {m['old_yes']:.1%} → {m['new_yes']:.1%}  "
             f"({'+' if m['change']>0 else ''}{m['change']:.1%})  "
-            f"| Vol: {vol} | Close: {hours}"
+            f"| Vol: {vol} | {time_left}"
         )
     return "\n".join(lines)
 
