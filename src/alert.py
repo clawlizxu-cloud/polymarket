@@ -14,13 +14,10 @@ from db_setup import get_connection
 logger = logging.getLogger(__name__)
 
 # Absolute threshold for YES price change (e.g. 0.35 -> 0.40 = 5%)
-PRICE_CHANGE_THRESHOLD = Decimal("0.05")
+PRICE_CHANGE_THRESHOLD = Decimal("0.25")
 
 # Minimum volume for alert (skip illiquid markets where 1 trade moves 10%)
 MIN_ALERT_VOLUME = 1000
-
-# Dedup: suppress alert if same condition_id alerted within this many snapshots
-DEDUP_SNAPSHOTS = 3  # ~30 minutes at 10-min interval
 
 # Sports keywords — exclude traditional sports + esports from alerts
 SPORTS_KEYWORDS = [
@@ -75,7 +72,7 @@ def is_sports_market(question: str) -> bool:
 
 
 def load_dedup_state():
-    """Load recently-alerted condition_ids from state file."""
+    """Load recently-alerted condition_ids with their last-seen prices from state file."""
     state_file = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "alert_dedup.json"
     )
@@ -87,16 +84,12 @@ def load_dedup_state():
 
 
 def save_dedup_state(state):
-    """Save dedup state, pruning entries older than DEDUP_SNAPSHOTS."""
+    """Save dedup state — keep last-seen prices for each market."""
     state_file = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "alert_dedup.json"
     )
-    # Keep only recent entries
-    pruned = {k: v for k, v in state.items() if v >= DEDUP_SNAPSHOTS}
-    # Decrement counters
-    pruned = {k: v - 1 for k, v in pruned.items()}
     with open(state_file, "w") as f:
-        json.dump(pruned, f)
+        json.dump(state, f)
 
 
 def detect_big_movers(threshold=None):
@@ -181,6 +174,11 @@ def detect_big_movers(threshold=None):
             continue
 
         if abs_change >= threshold:
+            # Skip if price hasn't changed since last alert (no new movement)
+            last_alerted_price = dedup.get(cid)
+            if last_alerted_price is not None and float(new_yes) == last_alerted_price:
+                continue
+
             direction = "📈" if change > 0 else "📉"
             movers.append({
                 "question": row["question"],
@@ -197,9 +195,9 @@ def detect_big_movers(threshold=None):
     # Sort by absolute change descending
     movers.sort(key=lambda x: x["abs_change"], reverse=True)
 
-    # Update dedup state with new alerts
+    # Update dedup state: store current YES price for each alerted market
     for m in movers:
-        dedup[m["condition_id"]] = DEDUP_SNAPSHOTS
+        dedup[m["condition_id"]] = m["new_yes"]
     save_dedup_state(dedup)
 
     cursor.close()
@@ -228,7 +226,7 @@ def format_alerts(movers):
     if not movers:
         return ""
 
-    lines = [f"🚨 {len(movers)} markets moved ≥5%:\n"]
+    lines = [f"🚨 {len(movers)} markets moved ≥25%:\n"]
     for i, m in enumerate(movers, 1):
         time_left = format_time_left(m['hours_to_close'])
         vol = f"${m['volume']:,.0f}"
